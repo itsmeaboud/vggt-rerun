@@ -18,7 +18,7 @@
 
 ## Overview
 
-**VGGT-Rerun** is a lightweight tool that bridges the gap between the [Video Generalized Geometry Transformer (VGGT)](https://github.com/facebookresearch/VGGT) and the [Rerun SDK](https://rerun.io/).
+**VGGT-Rerun** is a lightweight tool that bridges the gap between the [Visual Geometry Grounded Transformer (VGGT)](https://github.com/facebookresearch/VGGT) and the [Rerun SDK](https://rerun.io/).
 
 It provides a user-friendly **Gradio Web UI** to visualize **point clouds**, **camera trajectories**, and **depth maps** in real-time.
 
@@ -37,7 +37,7 @@ It provides a user-friendly **Gradio Web UI** to visualize **point clouds**, **c
 
 ```bash
 git clone https://github.com/itsmeaboud/vggt-rerun.git
-cd vggt-rerun
+cd vggt-vis
 ```
 
 ### 2. Environment Setup
