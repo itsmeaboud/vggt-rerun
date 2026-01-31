@@ -92,7 +92,7 @@ Click the local URL shown in your terminal (usually `http://127.0.0.1:7860`).
 
 This project builds upon the excellent work of:
 
-- **VGGT:** Video Generalized Geometry Transformer ([Facebook Research](https://github.com/facebookresearch/VGGT))
+- **VGGT:** Visual Geometry Grounded Transformer ([Facebook Research](https://github.com/facebookresearch/VGGT))
 - **Rerun:** The visualization SDK used for 3D rendering ([rerun.io](https://rerun.io/))
 
 ---
