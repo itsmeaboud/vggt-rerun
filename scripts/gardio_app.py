@@ -1,9 +1,12 @@
+import traceback
+import time
 import gradio as gr
 from pathlib import Path
 import torch
 import os
 import sys
 from pathlib import Path
+import rerun as rr
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -19,7 +22,7 @@ pipeline = VGGTInferencePipeline(device = device)
 
 
 
-def process_data(file_list, conf_threshold, view):
+def process_data(file_list, percentile, view):
     """
     This function handles the "Click"
     It takes inputs from the UI, runs the model, and triggers the visualizer 
@@ -35,14 +38,21 @@ def process_data(file_list, conf_threshold, view):
         print(status_msg)
 
         results = pipeline.predict(image_paths)
+        run_id = f"VGGT_{int(time.time())}"
 
-        visualize_result(results, threshold = conf_threshold, mode = view)
+        rr.init("VGGT", recording_id = run_id, spawn = True)
+        rr.log("world", rr.Clear(recursive = True))
+
+        visualize_result(results, percentage = percentile, mode = view)
 
         return "Success! Check the Rerun tab that just opened"
     
     except Exception as e:
-        return f"Error: {str(e)}"
-    
+        #return f"Error: {str(e)}"
+        full_error = traceback.format_exc()
+        print(full_error)
+
+        return f"CRASH DETECTED:\n\n{full_error}" #return f"Error: {str(e)}"   
 
 with gr.Blocks(title = "VGGT 3D") as demo:
 
@@ -60,18 +70,18 @@ with gr.Blocks(title = "VGGT 3D") as demo:
             )
 
             # Input 2: Confidnce Slider
-            threshold_slider = gr.Slider(
+            percentile_slider = gr.Slider(
                 minimum = 0.0,
-                maximum = 1.0, 
-                value = 0.7, 
-                step = 0.05, 
-                label = "2. Confidence Threshold", 
-                info = "Higher value = Cleaner but fewer points. Lower value = More points but more noise."
+                maximum = 100.0, 
+                value = 20.0, 
+                step = 1.0, 
+                label = "2. Confidence Percentile Filter", 
+                info = "Higher = Strict (Top % only). Lower = Relaxed (Show more points)."
             )
 
             # Input 3: View mode
             mode_radio = gr.Radio(
-                choices = ["rbg", "confidence"], 
+                choices = ["rgb", "confidence"], 
                 value = "rgb",
                 label = "3. Visualization Mode",
                 info = "RGB: Real Colors | Confidence: Heatmap of Uncertainty"
@@ -95,7 +105,7 @@ with gr.Blocks(title = "VGGT 3D") as demo:
 
     run_btn.click(
         fn = process_data,
-        inputs = [img_input, threshold_slider, mode_radio],
+        inputs = [img_input, percentile_slider, mode_radio],
         outputs = [output_text]
     )
 

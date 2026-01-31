@@ -1,14 +1,22 @@
+import sys
+from pathlib import Path
+# Add the parent folder to path (one level up)
+sys.path.append(str(Path(__file__).parent.parent))
+import numpy as np
 import torch
 from PIL import Image
 from pathlib import Path
 from torchvision import transforms
 from vggt.models.vggt import VGGT
-from typing import List, Dict, Union
-import sys
-from pathlib import Path
+from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from vggt.utils.geometry import unproject_depth_map_to_point_map
+from vggt.utils.load_fn import load_and_preprocess_images
+from visualizer import visualize_result
 
-# Add the parent folder to path (one level up)
-sys.path.append(str(Path(__file__).parent.parent))
+from typing import List, Dict, Union
+
+
+
 
 
 class VGGTInferencePipeline:
@@ -51,58 +59,53 @@ class VGGTInferencePipeline:
     def predict(self, 
                 image_paths: List[Path],) -> Dict[str, torch.Tensor] :
         
-        batch_tensor = []
-        
-        for path in image_paths:
-            img = Image.open(path)
-            img = self._resize_image(img)
-            img = self._pad_image(img)
-            batch_tensor.append(self.pre_process(img))
+   
 
-        if not batch_tensor:
-            raise ValueError ("No images provided.")
         
-        batch = torch.stack(batch_tensor, dim = 0).to(self.device)
-
+        # Prepare the image tensor [S, C, H, W] for feed forward
+        batch_images = load_and_preprocess_images(image_paths)
+        
         with torch.no_grad():
-            out = self.model(batch)
+            predictions = self.model(batch_images)
 
-        # Return CPU tensor for rerun visulizing
+        # [S, C, H, W] -> [S, H, W, C] for visulaization
+        predictions["images"] = batch_images.permute(0, 2, 3, 1)
 
-        return {"world_points": out["world_points"].cpu(),
-                "world_points_conf": out["world_points_conf"].cpu(),
-                "depth": out["depth"].cpu(),
-                "depth_conf": out["depth_conf"].cpu(),
-                "pose": out["pose_enc"].cpu(),
-                "pose_list": out["pose_enc_list"],
-                "images": batch.cpu()}
-    
+        extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions['pose_enc'], batch_images[0].shape[-2:])
+        predictions['extrinsic'] = extrinsic
+        predictions['intrinsic'] = intrinsic
+
+        # Convert tensor to numpy and remove batch dim for rerun visulizing
+        for key in predictions:
+            if isinstance(predictions[key], torch.Tensor):
+                predictions[key] = predictions[key].squeeze(0).numpy()
+
+
+
+        return predictions
+
 
 if __name__ == "__main__" :
 
-    debug = True
-    WORK_DIR = Path("mywork/images")
+    debug = False
+    WORK_DIR = Path("../examples/images")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pipeline = VGGTInferencePipeline(device = device)
     
-    image_paths = list(WORK_DIR.glob("*.png"))
+    image_paths = list(WORK_DIR.glob("*"))
+    print(WORK_DIR)
     out_dict = pipeline.predict(image_paths = image_paths)
 
     if image_paths:
          
         # Run prediction
-        result = pipeline.predict(image_paths = image_paths)
+        predictions = pipeline.predict(image_paths = image_paths)
         print("Inference Complete.")
-        print(f"Points Shape: {result['world_points'].shape}")
-        print(f"Poses Shape: {result['pose'].shape}")
+        
+        visualize_result(predictions, percentage = 90)
 
-        if debug:
-            torch.save(result["world_points"] ,"mywork/tensor/wp.pt")
-            torch.save(result["images"], "mywork/tensor/images.pt")
-            torch.save(result["world_points_conf"], "mywork/tensor/world_points_conf.pt")
-            torch.save(result["pose"] ,"mywork/tensor/pose.pt")
-
+        
     else:
         print("No images were found.")
 

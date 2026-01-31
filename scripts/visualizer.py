@@ -1,110 +1,158 @@
+import sys
+from pathlib import Path
+# Add the parent folder to path (one level up)
+sys.path.append(str(Path(__file__).parent.parent))
 import rerun as rr
+import rerun.blueprint as rrb
 import torch
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-import sys
-from pathlib import Path
 
-# Add the parent folder to path (one level up)
-sys.path.append(str(Path(__file__).parent.parent))
+def create_vggt_blueprint(num_frames):
 
-def visualize_result(results: dict, 
-                     threshold: float = 0.7, 
+    # 3D view: Points + Frustums Only
+    view3d = rrb.Spatial3DView(
+        name="3D Map",
+        origin='world',
+        contents=[
+            "+ $origin/**",                     
+            "- world/active_camera/**",         # Hide the moving 'active' camera copy from 3D
+            "- world/camera_**/image",          # Hide all RGB planes in 3D
+            "- world/camera_**/depth",          # Hide all Depth planes in 3D
+            "- world/camera_**/confidence",    # Hide all Confidence planes in 3D
+            "+ world/camera_*"                 # RE-INCLUDE the wireframe frustums
+        ]
+    )
+
+
+    # 2D view: Image, Depth, Confidence
+ 
+
+    view2d = rrb.Vertical(
+        name = f"Active Frame",
+        contents = [
+            rrb.Spatial2DView(name = "Image", origin = f"world/active_camera/image"),
+            rrb.Spatial2DView(name = "Depth", origin = f"world/active_camera/depth"),
+            rrb.Spatial2DView(name = "Confidence", origin = f"world/active_camera/confidence")              
+        ]
+    )
+
+    # Final layout
+    blueprint = rrb.Blueprint(
+        rrb.Horizontal(
+            contents = [
+                view3d,
+                rrb.Vertical(name = "2D Inspector", contents = [view2d])
+            ],
+            column_shares = [2, 1]
+        ),
+        collapse_panels = True
+    )
+
+    return blueprint
+
+
+
+
+
+def visualize_result(data: dict, 
+                     percentage: float = 70.0, 
                      mode: str = "rgb"):
 
 
-    rr.init("VGGT Demo", spawn=True)
 
     print("Streaming data to Rerun Timeline...")
 
-    #rr.log("world", rr.Clear(recursive=True))
-    #rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_UP, timeless=True)
-
-    world_points = results['world_points'].squeeze(0)
-    images = results['images']
-    confidence = results["world_points_conf"].squeeze(0)
-    poses = results["pose"].squeeze(0)
-    frames = world_points.shape[0]
-
-    cmap = plt.get_cmap('turbo')
-
-    for i in range(frames):
-        
   
-        rr.set_time("frame_idx", sequence = i)
+    # Retrieve data
+    world_points = data['world_points']  # (S, H, W, 3)
+    confidence = data["world_points_conf"]   # (S, H, W)
+    images = data['images']              # (S, H, W, C)
+    if len(images.shape) == 3:
+        images = np.expand_dims(images, axis = 0)
+    
+    depth_maps = data["depth"]
 
-        img_np = images[i].permute(1, 2, 0).numpy()
-        img_np = np.flipud(img_np)
-        pts_np = world_points[i].reshape(-1, 3).numpy()
-        conf_np = confidence[i].reshape(-1).numpy()
+    extrinsic = data["extrinsic"]        # (S, 3, 4)
+    intrinsic = data["intrinsic"]        # (S, 3, 4)
 
-        mask = conf_np >= threshold
-        filtered_pts = pts_np[mask]
+    frames = images.shape[0]
 
-        if mode == 'confidence':
-            cols = cmap(conf_np[mask])[:, :3]
-        else:
-            cols = img_np.reshape(-1, 3)[mask]
 
+
+    parent_path = Path("world") 
+
+    rr.log(f"{parent_path}",
+           rr.ViewCoordinates.RDF,
+           static=True
+           )
+    
+    rr.log(
+        f"{parent_path}",
+        rr.Transform3D(rotation = rr.RotationAxisAngle(axis=(0, 1, 0), radians=-np.pi / 4)),
+        static=True,
+    )
+
+
+    
+    for idx in range(frames):
+
+        rr.set_time("frame_idx", sequence = idx)
+
+
+        # Prepare data frame for visualization
+        wp_flatten = world_points[idx].reshape(-1, 3)
+        colors_flatten = images[idx].reshape(-1, 3)
+        print(colors_flatten.shape)
+        image_rgb = images[idx]
+        depth_map = depth_maps[idx]
+        conf_map = confidence[idx]
+
+        
+
+        threshold = np.percentile(conf_map, percentage)
+        mask = conf_map > threshold
+        mask_flatten = mask.reshape(-1)
+        count = np.count_nonzero(mask_flatten)
+        wp_filterd = wp_flatten[mask_flatten]
+        colors_filtered = colors_flatten[mask_flatten]
+
+        conf_map = conf_map * mask
+
+        conf_max = conf_map.max()
+        conf_map /= conf_max
+
+
+        # 1. Log 3D points to unique paths (This creates the 'buildup' you want)
         rr.log(
-            "world/points", 
-            rr.Points3D(filtered_pts, colors=cols, radii=0.01)
+            f"world/points/frame_{idx}",
+            rr.Points3D(wp_filterd, colors=colors_filtered)
         )
 
-        pose = poses[i].numpy()
-        q = [pose[4], pose[5], pose[6], pose[3]] 
+        # 2. Log to unique camera path (for the 3D 'trail' of frustums)
+        cam_path = f"world/camera_{idx}"
+        rr.log(cam_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
+                                    width=image_rgb.shape[1], height=image_rgb.shape[0]))
+        rr.log(cam_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
+                                         mat3x3=extrinsic[idx][:3, :3]))
 
-        rr.log(
-            "world/camera",
-            rr.Transform3D(
-                translation=pose[:3],
-                rotation=rr.Quaternion(xyzw=q)
-            )
-        )
+        # 3. Log to 'active_camera' path (This drives the 2D views)
+        active_path = "world/active_camera"
+        rr.log(active_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
+                                       width=image_rgb.shape[1], height=image_rgb.shape[0]))
+        rr.log(active_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
+                                           mat3x3=extrinsic[idx][:3, :3]))
+        
+        # Log the actual 2D images to the active path
+        rr.log(f"{active_path}/image", rr.Image(image_rgb))
+        rr.log(f"{active_path}/depth", rr.DepthImage(depth_map))
+        rr.log(f"{active_path}/confidence", rr.Image(conf_map))
 
-        height = img_np.shape[0]
-        width = img_np.shape[1]
-
-        f_len_x = pose[7].item() * width  
-        f_len_y = pose[8].item() * height 
-
-        rr.log(
-            "world/camera",
-            rr.Pinhole(
-                focal_length = (f_len_x, f_len_y),
-                width = width,
-                height = height,
-                
-
-                image_plane_distance = 0.1, 
-                
-                #camera_xyz=rr.ViewCoordinates.RDF 
-            )
-        )
-
-
-
-        rr.log("world/camera", rr.Image(img_np))
-
+    # Send the blueprint after the loop
+    rr.send_blueprint(create_vggt_blueprint(frames))
     print(f"✅ Processed {frames} frames.")
 
 if __name__ == "__main__":
-    
-    # Load Tensors
-    print("Loading tensors...")
-    base_path = "mywork/tensor"
-    pts = torch.load(f"{base_path}/wp.pt", map_location='cpu')
-    images = torch.load(f"{base_path}/images.pt", map_location='cpu')
-    conf = torch.load(f"{base_path}/world_points_conf.pt", map_location='cpu')
-    poses = torch.load(f"{base_path}/pose.pt", map_location='cpu')
 
-    results = {
-        "world_points": pts,
-        "world_points_conf": conf,
-        "pose": poses,
-        "images": images
-    }
-            
-    visualize_result(results=results)
-    
+  pass 
