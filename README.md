@@ -62,7 +62,7 @@ pip install -r requirements.txt
 Start the Gradio web interface by running:
 
 ```bash
-python -m scripts.gardio_app
+python -m scripts.gradio_app
 ```
 
 ### 2. Open in Browser
@@ -81,7 +81,7 @@ Click the local URL shown in your terminal (usually `http://127.0.0.1:7860`).
 
 | File / Folder | Description |
 |---|---|
-| `scripts/gardio_app.py` | The main Gradio web application |
+| `scripts/gradio_app.py` | The main Gradio web application |
 | `scripts/inference.py` | Core pipeline: Loads model and processes data |
 | `scripts/visualizer.py` | Helper functions for Rerun visualization |
 | `vggt/` | Original VGGT model implementation |
