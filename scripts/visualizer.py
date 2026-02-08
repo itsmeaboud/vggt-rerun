@@ -66,12 +66,8 @@ def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
     mask = conf_map > threshold
 
     conf_map_filtered = conf_map * mask
-    print(f"Filtered shape: {conf_map_filtered.shape}")
-
 
     conf_map_norm = conf_map_filtered / conf_map_filtered.max()
-    print(f"Norm shape: {conf_map_norm.shape}")
-
 
     return mask, conf_map_norm, threshold
     
