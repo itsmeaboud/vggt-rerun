@@ -65,8 +65,13 @@ def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
 
     mask = conf_map > threshold
 
-    conf_map_filtered = conf_map[mask]
-    conf_map_norm = conf_map[mask] / conf_map_filtered.max()
+    conf_map_filtered = conf_map * mask
+    print(f"Filtered shape: {conf_map_filtered.shape}")
+
+
+    conf_map_norm = conf_map_filtered / conf_map_filtered.max()
+    print(f"Norm shape: {conf_map_norm.shape}")
+
 
     return mask, conf_map_norm, threshold
     
@@ -77,7 +82,7 @@ def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
 
 
 def visualize_result(data: Dict, 
-                     percentage: Float = 70.0, 
+                     percentage: Float = 20.0, 
                      mode: str = "rgb"):
 
 
@@ -165,7 +170,7 @@ def visualize_result(data: Dict,
         # Log the actual 2D images to the active path
         rr.log(f"{active_path}/image", rr.Image(image_rgb))
         rr.log(f"{active_path}/depth", rr.DepthImage(depth_map))
-        rr.log(f"{active_path}/confidence", rr.Image(conf_map))
+        rr.log(f"{active_path}/confidence", rr.Image(conf_map_norm))
 
     # Send the blueprint after the loop
     rr.send_blueprint(create_vggt_blueprint(frames))
