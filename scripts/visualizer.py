@@ -8,8 +8,12 @@ import torch
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+from typing import Tuple, Dict
+from jaxtyping import Float, Int, Bool, UInt8
+from numpy import ndarray
+from rerun.blueprint import Blueprint
 
-def create_vggt_blueprint(num_frames):
+def create_vggt_blueprint(num_frames: Int) -> Blueprint:
 
     # 3D view: Points + Frustums Only
     view3d = rrb.Spatial3DView(
@@ -53,11 +57,27 @@ def create_vggt_blueprint(num_frames):
     return blueprint
 
 
+def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
+                                    percentile: Float
+                                    ) -> Tuple[Bool[ndarray, "H W"], Float[ndarray, "H W"], Float] :
+
+    threshold = np.percentile(conf_map, percentile)
+
+    mask = conf_map > threshold
+
+    conf_map_filtered = conf_map[mask]
+    conf_map_norm = conf_map[mask] / conf_map_filtered.max()
+
+    return mask, conf_map_norm, threshold
+    
+    
 
 
+    
 
-def visualize_result(data: dict, 
-                     percentage: float = 70.0, 
+
+def visualize_result(data: Dict, 
+                     percentage: Float = 70.0, 
                      mode: str = "rgb"):
 
 
@@ -65,19 +85,23 @@ def visualize_result(data: dict,
     print("Streaming data to Rerun Timeline...")
 
   
-    # Retrieve data
-    world_points = data['world_points']  # (S, H, W, 3)
-    confidence = data["world_points_conf"]   # (S, H, W)
-    images = data['images']              # (S, H, W, C)
+    # Retrieve data from VGGT model output
+    world_points: Float[ndarray, "S H W 3"] = data['world_points']
+
+    confidence: Float[ndarray, "S H W"] = data["world_points_conf"]
+
+    images: Float[ndarray, "S H W 3"] = data['images']
+
+
     if len(images.shape) == 3:
         images = np.expand_dims(images, axis = 0)
     
-    depth_maps = data["depth"]
+    depth_maps: Float[ndarray, "S H W"] = data["depth"]
 
-    extrinsic = data["extrinsic"]        # (S, 3, 4)
-    intrinsic = data["intrinsic"]        # (S, 3, 4)
+    extrinsic: Float[ndarray, "S 3 4"] = data["extrinsic"]
+    intrinsic: Float[ndarray, "S 3 4"] = data["intrinsic"]
 
-    frames = images.shape[0]
+    frames: Int = images.shape[0]
 
 
 
@@ -103,31 +127,25 @@ def visualize_result(data: dict,
 
         # Prepare data frame for visualization
         wp_flatten = world_points[idx].reshape(-1, 3)
-        colors_flatten = images[idx].reshape(-1, 3)
-        print(colors_flatten.shape)
+
         image_rgb = images[idx]
+        colors_flatten = image_rgb.reshape(-1, 3)
+
         depth_map = depth_maps[idx]
         conf_map = confidence[idx]
 
-        
+        # Filter the points
+        mask, conf_map_norm, _ = filter_and_normalize_confidence(conf_map, percentage)
+        mask = mask.reshape(-1)
+        wp_filtered = wp_flatten[mask]
+        colors_filtered = colors_flatten[mask]
 
-        threshold = np.percentile(conf_map, percentage)
-        mask = conf_map > threshold
-        mask_flatten = mask.reshape(-1)
-        count = np.count_nonzero(mask_flatten)
-        wp_filterd = wp_flatten[mask_flatten]
-        colors_filtered = colors_flatten[mask_flatten]
-
-        conf_map = conf_map * mask
-
-        conf_max = conf_map.max()
-        conf_map /= conf_max
 
 
         # 1. Log 3D points to unique paths (This creates the 'buildup' you want)
         rr.log(
             f"world/points/frame_{idx}",
-            rr.Points3D(wp_filterd, colors=colors_filtered)
+            rr.Points3D(wp_filtered, colors=colors_filtered)
         )
 
         # 2. Log to unique camera path (for the 3D 'trail' of frustums)
