@@ -7,7 +7,7 @@ import rerun.blueprint as rrb
 import torch
 import numpy as np
 import time
-import matplotlib.pyplot as plt
+import matplotlib.cm
 from typing import Tuple, Dict
 from jaxtyping import Float, Int, Bool, UInt8
 from numpy import ndarray
@@ -71,10 +71,6 @@ def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
 
     return mask, conf_map_norm, threshold
     
-    
-
-
-    
 
 
 def visualize_result(data: Dict, 
@@ -94,6 +90,7 @@ def visualize_result(data: Dict,
     images: Float[ndarray, "S H W 3"] = data['images']
 
 
+    # If only one image append batch = 1
     if len(images.shape) == 3:
         images = np.expand_dims(images, axis = 0)
     
@@ -141,6 +138,17 @@ def visualize_result(data: Dict,
         wp_filtered = wp_flatten[mask]
         colors_filtered = colors_flatten[mask]
 
+        # Heatmap for confidence
+        # Get color map
+        cmap = matplotlib.cm.get_cmap('turbo')
+        # Map confidence
+        mapped_colors = cmap(conf_map / 100.0)
+        # Extract RGB only          
+        conf_map_colored = mapped_colors[:, :, :3]
+
+
+        if mode == "confidence":
+            colors_filtered = conf_map_colored.reshape(-1, 3)[mask]
 
 
         # 1. Log 3D points to unique paths (This creates the 'buildup' you want)
@@ -166,7 +174,7 @@ def visualize_result(data: Dict,
         # Log the actual 2D images to the active path
         rr.log(f"{active_path}/image", rr.Image(image_rgb))
         rr.log(f"{active_path}/depth", rr.DepthImage(depth_map))
-        rr.log(f"{active_path}/confidence", rr.Image(conf_map_norm))
+        rr.log(f"{active_path}/confidence", rr.Image(conf_map_colored))
 
     # Send the blueprint after the loop
     rr.send_blueprint(create_vggt_blueprint(frames))
