@@ -5,7 +5,7 @@
 **Interactive 3D Visualization for [VGGT](https://github.com/facebookresearch/VGGT) using [Rerun](https://rerun.io/)**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![Rerun](https://img.shields.io/badge/Rerun-0.15+-ff69b4.svg)](https://rerun.io/)
+[![Rerun](https://img.shields.io/badge/Rerun-0.25+-ff69b4.svg)](https://rerun.io/)
 [![Gradio](https://img.shields.io/badge/Gradio-UI-orange.svg)](https://www.gradio.app/)
 
 <br />
