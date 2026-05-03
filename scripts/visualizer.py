@@ -12,6 +12,7 @@ from typing import Tuple, Dict
 from jaxtyping import Float, Int, Bool, UInt8
 from numpy import ndarray
 from rerun.blueprint import Blueprint
+import tempfile
 
 def create_vggt_blueprint(num_frames: Int) -> Blueprint:
 
@@ -75,13 +76,15 @@ def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
 
 def visualize_result(data: Dict, 
                      percentage: Float = 20.0, 
-                     mode: str = "rgb"):
+                     mode: str = "rgb",
+                     recording_id: str | None = None) -> str: 
+    
 
 
 
     print("Streaming data to Rerun Timeline...")
+    print("Writing Rerun recording....")
 
-  
     # Retrieve data from VGGT model output
     world_points: Float[ndarray, "S H W 3"] = data['world_points']
 
@@ -101,16 +104,27 @@ def visualize_result(data: Dict,
 
     frames: Int = images.shape[0]
 
+    temp = tempfile.NamedTemporaryFile(prefix = "output_", suffix = ".rrd", delete = False )
+    temp_path = temp.name
+    temp.close
 
+    blueprint = create_vggt_blueprint(frames)
+    recording = rr.RecordingStream(application_id = "VGGT",
+                                recording_id = recording_id)
+    recording.save(path = temp.name, default_blueprint = blueprint)
+
+
+
+    recording.log("world", rr.Clear(recursive = True))
 
     parent_path = Path("world") 
 
-    rr.log(f"{parent_path}",
+    recording.log(f"{parent_path}",
            rr.ViewCoordinates.RDF,
            static=True
            )
     
-    rr.log(
+    recording.log(
         f"{parent_path}",
         rr.Transform3D(rotation = rr.RotationAxisAngle(axis=(0, 1, 0), radians=-np.pi / 4)),
         static=True,
@@ -120,7 +134,7 @@ def visualize_result(data: Dict,
     
     for idx in range(frames):
 
-        rr.set_time("frame_idx", sequence = idx)
+        recording.set_time("frame_idx", sequence = idx)
 
 
         # Prepare data frame for visualization
@@ -152,33 +166,39 @@ def visualize_result(data: Dict,
 
 
         # 1. Log 3D points to unique paths (This creates the 'buildup' you want)
-        rr.log(
+        recording.log(
             f"world/points/frame_{idx}",
             rr.Points3D(wp_filtered, colors=colors_filtered)
         )
 
         # 2. Log to unique camera path (for the 3D 'trail' of frustums)
         cam_path = f"world/camera_{idx}"
-        rr.log(cam_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
+        recording.log(cam_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
                                     width=image_rgb.shape[1], height=image_rgb.shape[0]))
-        rr.log(cam_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
+        recording.log(cam_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
                                          mat3x3=extrinsic[idx][:3, :3]))
 
         # 3. Log to 'active_camera' path (This drives the 2D views)
         active_path = "world/active_camera"
-        rr.log(active_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
+        recording.log(active_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
                                        width=image_rgb.shape[1], height=image_rgb.shape[0]))
-        rr.log(active_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
+        recording.log(active_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
                                            mat3x3=extrinsic[idx][:3, :3]))
         
         # Log the actual 2D images to the active path
-        rr.log(f"{active_path}/image", rr.Image(image_rgb))
-        rr.log(f"{active_path}/depth", rr.DepthImage(depth_map))
-        rr.log(f"{active_path}/confidence", rr.Image(conf_map_colored))
+        recording.log(f"{active_path}/image", rr.Image(image_rgb))
+        recording.log(f"{active_path}/depth", rr.DepthImage(depth_map))
+        recording.log(f"{active_path}/confidence", rr.Image(conf_map_colored))
 
     # Send the blueprint after the loop
-    rr.send_blueprint(create_vggt_blueprint(frames))
-    print(f"✅ Processed {frames} frames.")
+    #rr.send_blueprint(create_vggt_blueprint(frames))
+    recording.flush(timeout_sec = 10)
+    recording.disconnect()
+
+    state = f"Processed {frames} frames."
+    print(state)
+    
+    return temp_path , state
 
 if __name__ == "__main__":
 

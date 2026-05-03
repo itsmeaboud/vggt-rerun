@@ -10,6 +10,9 @@ huggingface_hub
 einops
 safetensors
 
-rerun-sdk==0.25.1
+rerun-sdk==0.31.4
+gradio_rerun==0.31.4
 gradio
 matplotlib
+jaxtyping
+

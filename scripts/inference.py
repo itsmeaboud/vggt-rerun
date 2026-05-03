@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 import numpy as np
 import torch
+import time
 from PIL import Image
 from pathlib import Path
 from torchvision import transforms
@@ -66,8 +67,11 @@ class VGGTInferencePipeline:
         batch_images = load_and_preprocess_images(image_paths)
         
         with torch.no_grad():
+            print("Inference started...")
+            start_time = time.time()
             predictions = self.model(batch_images)
-
+            elapsed_time = time.time() - start_time
+            print(f"Inference finished in: {elapsed_time:.2f}s")
         # [S, C, H, W] -> [S, H, W, C] for visulaization
         predictions["images"] = batch_images.permute(0, 2, 3, 1)
 
