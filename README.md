@@ -5,7 +5,7 @@
 **Interactive 3D Visualization for [VGGT](https://github.com/facebookresearch/VGGT) using [Rerun](https://rerun.io/)**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![Rerun](https://img.shields.io/badge/Rerun-0.25+-ff69b4.svg)](https://rerun.io/)
+[![Rerun](https://img.shields.io/badge/Rerun-0.31.4+-ff69b4.svg)](https://rerun.io/)
 [![Gradio](https://img.shields.io/badge/Gradio-UI-orange.svg)](https://www.gradio.app/)
 
 <br />
@@ -42,7 +42,7 @@ cd vggt-vis
 
 ### 2. Environment Setup
 
-We recommend using Miniconda to manage dependencies.
+Recommend using Miniconda to manage dependencies.
 
 ```bash
 # Create environment
@@ -62,7 +62,7 @@ pip install -r requirements.txt
 Start the Gradio web interface by running:
 
 ```bash
-python -m scripts.gradio_app
+python3  scripts/gradio_app.py
 ```
 
 ### 2. Open in Browser
