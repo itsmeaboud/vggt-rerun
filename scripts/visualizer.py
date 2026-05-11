@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 # Add the parent folder to path (one level up)
@@ -6,15 +8,24 @@ import rerun as rr
 import rerun.blueprint as rrb
 import torch
 import numpy as np
-import time
-import matplotlib.cm
-from typing import Tuple, Dict
+from typing import Tuple, Dict, TYPE_CHECKING
 from jaxtyping import Float, Int, Bool, UInt8
 from numpy import ndarray
-from rerun.blueprint import Blueprint
 import tempfile
 
-def create_vggt_blueprint(num_frames: Int) -> Blueprint:
+from scripts.inference import VGGTOutput
+from scripts.point_cloud import (
+    ColorMode,
+    point_cloud_to_frame,
+    confidence_image,
+    rgb_to_uint8,
+)
+
+if TYPE_CHECKING:
+    from inference import VGGTOutput
+
+
+def create_vggt_blueprint(num_frames: Int) -> rrb.Blueprint:
 
     # 3D view: Points + Frustums Only
     view3d = rrb.Spatial3DView(
@@ -22,11 +33,11 @@ def create_vggt_blueprint(num_frames: Int) -> Blueprint:
         origin='world',
         contents=[
             "+ $origin/**",                     
-            "- world/active_camera/**",         # Hide the moving 'active' camera copy from 3D
-            "- world/camera_**/image",          # Hide all RGB planes in 3D
-            "- world/camera_**/depth",          # Hide all Depth planes in 3D
-            "- world/camera_**/confidence",    # Hide all Confidence planes in 3D
-            "+ world/camera_*"                 # RE-INCLUDE the wireframe frustums
+            "- world/active_camera/**",         
+            "- world/camera_**/image",          
+            "- world/camera_**/depth",          
+            "- world/camera_**/confidence",    
+            "+ world/camera_*"                 
         ]
     )
 
@@ -43,8 +54,7 @@ def create_vggt_blueprint(num_frames: Int) -> Blueprint:
         ]
     )
 
-    # Final layout
-    blueprint = rrb.Blueprint(
+    return rrb.Blueprint(
         rrb.Horizontal(
             contents = [
                 view3d,
@@ -55,151 +65,97 @@ def create_vggt_blueprint(num_frames: Int) -> Blueprint:
         collapse_panels = True
     )
 
-    return blueprint
 
 
-def filter_and_normalize_confidence(conf_map: Float[ndarray, "H W"],
-                                    percentile: Float
-                                    ) -> Tuple[Bool[ndarray, "H W"], Float[ndarray, "H W"], Float] :
-
-    threshold = np.percentile(conf_map, percentile)
-
-    mask = conf_map > threshold
-
-    conf_map_filtered = conf_map * mask
-
-    conf_map_norm = conf_map_filtered / conf_map_filtered.max()
-
-    return mask, conf_map_norm, threshold
-    
-
-
-def visualize_result(data: Dict, 
-                     percentage: Float = 20.0, 
-                     mode: str = "rgb",
-                     recording_id: str | None = None) -> str: 
+def new_rrd_path() -> Path:
+    with tempfile.NamedTemporaryFile(prefix = "output_", suffix = ".rrd", delete = False) as temp:
+        return Path(temp.name)
     
 
 
 
-    print("Streaming data to Rerun Timeline...")
-    print("Writing Rerun recording....")
-
-    # Retrieve data from VGGT model output
-    world_points: Float[ndarray, "S H W 3"] = data['world_points']
-
-    confidence: Float[ndarray, "S H W"] = data["world_points_conf"]
-
-    images: Float[ndarray, "S H W 3"] = data['images']
-
-
-    # If only one image append batch = 1
-    if len(images.shape) == 3:
-        images = np.expand_dims(images, axis = 0)
+def write_to_rrd(
+        data: VGGTOutput,
+        percentile: float | None = None,
+        color_mode: ColorMode = "rgb",
+        recording_id: str | None = None,
+        output_path: str | Path | None = None
+) -> Path:
     
-    depth_maps: Float[ndarray, "S H W"] = data["depth"]
+    output = Path(output_path) if output_path else new_rrd_path()
+    height, width = data.shape
 
-    extrinsic: Float[ndarray, "S 3 4"] = data["extrinsic"]
-    intrinsic: Float[ndarray, "S 3 4"] = data["intrinsic"]
-
-    frames: Int = images.shape[0]
-
-    temp = tempfile.NamedTemporaryFile(prefix = "output_", suffix = ".rrd", delete = False )
-    temp_path = temp.name
-    temp.close
-
-    blueprint = create_vggt_blueprint(frames)
-    recording = rr.RecordingStream(application_id = "VGGT",
-                                recording_id = recording_id)
-    recording.save(path = temp.name, default_blueprint = blueprint)
-
-
-
-    recording.log("world", rr.Clear(recursive = True))
-
-    parent_path = Path("world") 
-
-    recording.log(f"{parent_path}",
-           rr.ViewCoordinates.RDF,
-           static=True
-           )
-    
-    recording.log(
-        f"{parent_path}",
-        rr.Transform3D(rotation = rr.RotationAxisAngle(axis=(0, 1, 0), radians=-np.pi / 4)),
-        static=True,
-    )
-
-
-    
-    for idx in range(frames):
-
-        recording.set_time("frame_idx", sequence = idx)
-
-
-        # Prepare data frame for visualization
-        wp_flatten = world_points[idx].reshape(-1, 3)
-
-        image_rgb = images[idx]
-        colors_flatten = image_rgb.reshape(-1, 3)
-
-        depth_map = depth_maps[idx]
-        conf_map = confidence[idx]
-
-        # Filter the points
-        mask, conf_map_norm, _ = filter_and_normalize_confidence(conf_map, percentage)
-        mask = mask.reshape(-1)
-        wp_filtered = wp_flatten[mask]
-        colors_filtered = colors_flatten[mask]
-
-        # Heatmap for confidence
-        # Get color map
-        cmap = matplotlib.cm.get_cmap('turbo')
-        # Map confidence
-        mapped_colors = cmap(conf_map / 100.0)
-        # Extract RGB only          
-        conf_map_colored = mapped_colors[:, :, :3]
-
-
-        if mode == "confidence":
-            colors_filtered = conf_map_colored.reshape(-1, 3)[mask]
-
-
-        # 1. Log 3D points to unique paths (This creates the 'buildup' you want)
+    recording = rr.RecordingStream(application_id = "VGGT", recording_id = recording_id)
+    try:
+        recording.save(path = str(output), default_blueprint = create_vggt_blueprint(data.frames))
+        recording.log("world", rr.Clear(recursive = True))
+        recording.log("world", rr.ViewCoordinates.RDF, static = True)
         recording.log(
-            f"world/points/frame_{idx}",
-            rr.Points3D(wp_filtered, colors=colors_filtered)
+            "world",
+            rr.Transform3D(
+                rotation = rr.RotationAxisAngle(axis = (0, 1, 0), radians = np.pi /4),   
+            ),
+            static = True
         )
 
-        # 2. Log to unique camera path (for the 3D 'trail' of frustums)
-        cam_path = f"world/camera_{idx}"
-        recording.log(cam_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
-                                    width=image_rgb.shape[1], height=image_rgb.shape[0]))
-        recording.log(cam_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
-                                         mat3x3=extrinsic[idx][:3, :3]))
+        for frame_idx in range(data.frames):
+            recording.set_time("frame_idx", sequence = frame_idx)
+            points, colors = point_cloud_to_frame(
+                data = data,
+                frame_idx = frame_idx,
+                percentile = percentile,
+                color_mode = color_mode
+            )
 
-        # 3. Log to 'active_camera' path (This drives the 2D views)
-        active_path = "world/active_camera"
-        recording.log(active_path, rr.Pinhole(image_from_camera=intrinsic[idx][:,:3], 
-                                       width=image_rgb.shape[1], height=image_rgb.shape[0]))
-        recording.log(active_path, rr.Transform3D(translation=extrinsic[idx][:3, 3], 
-                                           mat3x3=extrinsic[idx][:3, :3]))
-        
-        # Log the actual 2D images to the active path
-        recording.log(f"{active_path}/image", rr.Image(image_rgb))
-        recording.log(f"{active_path}/depth", rr.DepthImage(depth_map))
-        recording.log(f"{active_path}/confidence", rr.Image(conf_map_colored))
+            recording.log(
+                f"world/points/frame_{frame_idx}",
+                rr.Points3D(points, colors = colors)
+            )
 
-    # Send the blueprint after the loop
-    #rr.send_blueprint(create_vggt_blueprint(frames))
-    recording.flush(timeout_sec = 10)
-    recording.disconnect()
+            camera_path = f"world/camera_{frame_idx}"
+            recording.log(
+                camera_path,
+                rr.Pinhole(image_from_camera = data.intrinsic[frame_idx], width = width, height = height)
+            )
+            recording.log(
+                camera_path,
+                rr.Transform3D(
+                    translation = data.extrinsic[frame_idx][:3, 3],
+                    mat3x3 = data.extrinsic[frame_idx][:3, :3]
+                )
+            )
 
-    state = f"Processed {frames} frames."
-    print(state)
+            active_path = "world/active_camera"
+            depth = data.depth[frame_idx]
+            if depth.ndim == 3 and depth.shape[-1] == 1:
+                depth = depth[..., 0]
+            recording.log(f"{active_path}/image", rr.Image(rgb_to_uint8(data.images[frame_idx])))
+            recording.log(f"{active_path}/depth", rr.DepthImage(depth))
+            recording.log(f"{active_path}/confidence", rr.Image(confidence_image(data.depth_conf[frame_idx])))
+
+        recording.flush(timeout_sec = 10)
+    finally:
+        recording.disconnect()
+
+    return output
+
+
+def visualize_result(
+        data: VGGTOutput,
+        percentage: float | None = None,
+        mode: ColorMode = "rgb",
+        recording_id: str | None = None,
+) -> tuple[VGGTOutput, str, str]:
     
-    return temp_path , state
+    rrd_path = write_to_rrd(
+        data,
+        percentile = percentage,
+        color_mode = mode,
+        recording_id = recording_id
+    )
 
+    state = f"Processed {data.frames} frames"
+    return data, str(rrd_path), state
 if __name__ == "__main__":
 
   pass 
